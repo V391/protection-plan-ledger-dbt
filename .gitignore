@@ -1,0 +1,9 @@
+.venv/
+data/
+warehouse/
+target/
+target_defect/
+logs/
+dbt_packages/
+__pycache__/
+.user.yml

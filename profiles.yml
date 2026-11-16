@@ -1,0 +1,25 @@
+protection_ledger:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: warehouse/dev.duckdb
+      threads: 4
+    full:
+      type: duckdb
+      path: warehouse/full.duckdb
+      threads: 4
+    defect:
+      type: duckdb
+      path: warehouse/defect.duckdb
+      threads: 4
+    snowflake:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT', '') }}"
+      user: "{{ env_var('SNOWFLAKE_USER', '') }}"
+      authenticator: externalbrowser
+      role: TRANSFORMER
+      warehouse: TRANSFORMING
+      database: ANALYTICS
+      schema: DBT
+      threads: 8

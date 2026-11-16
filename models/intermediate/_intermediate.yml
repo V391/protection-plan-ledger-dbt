@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: int_merchant_versions
+    description: Type 2 merchant history from the CDC log. One version per change, valid_from inclusive, valid_to exclusive.
+    columns:
+      - name: merchant_version_id
+        description: merchant_id plus valid_from. Two changes at the same instant collide here.
+        data_tests: [unique, not_null]
+
+  - name: int_contracts
+    description: One row per contract with its cancellation, purchase date FX rate and point in time revenue share.
+    columns:
+      - name: contract_id
+        description: A replayed created event with a new event_id would duplicate the contract here.
+        data_tests: [unique, not_null]
+      - name: fx_rate_at_purchase
+        description: Missing when the FX feed has a gap on the purchase date.
+        data_tests: [not_null]
+      - name: revenue_share_rate_at_sale
+        description: Missing when no merchant version covers the purchase timestamp.
+        data_tests: [not_null]
+
+  - name: util_months
+    description: Month spine for the reporting horizon.
+    columns:
+      - name: month_start
+        data_tests: [unique, not_null]

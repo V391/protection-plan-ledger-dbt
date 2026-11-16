@@ -1,0 +1,26 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Feeds landed from merchant integrations, the contracts webhook, the claims system and the payments platform.
+    schema: raw
+    tables:
+      - name: merchant_changes
+        description: CDC log of merchant settings. One row per insert or update. Revenue share changes over time.
+      - name: orders
+        description: Merchant orders from the platform integrations (Shopify, BigCommerce, direct API).
+      - name: order_lines
+        description: Order lines with the merchant catalogue eligibility flag for protection.
+      - name: contract_events
+        description: Contract webhook. Delivered at least once, so the same event_id can arrive more than once.
+      - name: claim_status_history
+        description: Every claim status change. Some rows land days after the change happened.
+      - name: payment_transactions
+        description: Payments platform balance transactions. Amounts in minor units (cents, pence). Refunds negative.
+      - name: fx_rates
+        description: Daily USD per unit rates for USD, CAD and GBP.
+  - name: truth
+    description: Answer key written by the simulator, independent of dbt. Used only by the reconciliation test.
+    schema: truth
+    tables:
+      - name: merchant_monthly

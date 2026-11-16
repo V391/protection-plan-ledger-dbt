@@ -1,0 +1,323 @@
+version: 2
+
+models:
+  - name: dim_merchants
+    description: Merchant dimension, Type 2. Join facts on merchant_id and the event timestamp between valid_from and valid_to.
+    config:
+      contract: {enforced: true}
+    columns:
+      - name: merchant_version_id
+        data_type: varchar
+        description: Surrogate key, merchant_id at valid_from.
+        data_tests: [unique, not_null]
+      - name: merchant_id
+        data_type: varchar
+        description: Merchant identifier from the platform integration.
+        data_tests: [not_null]
+      - name: merchant_name
+        data_type: varchar
+        description: Trading name.
+      - name: vertical
+        data_type: varchar
+        description: Product vertical (electronics, furniture, bikes, ...).
+      - name: platform
+        data_type: varchar
+        description: Integration the merchant sells through (shopify, bigcommerce, api).
+      - name: currency
+        data_type: varchar
+        description: Settlement currency.
+      - name: revenue_share_rate
+        data_type: double
+        description: Share of plan price paid to the merchant while this version is valid.
+      - name: is_test_merchant
+        data_type: boolean
+        description: Sandbox and QA stores. Excluded from every metric.
+      - name: valid_from
+        data_type: timestamp
+        description: Version start, inclusive.
+      - name: valid_to
+        data_type: timestamp
+        description: Version end, exclusive. Null on the current version.
+      - name: is_current
+        data_type: boolean
+        description: True on the latest version of each merchant.
+
+  - name: fct_contracts
+    description: One row per protection contract, current state. Grain is contract_id.
+    config:
+      contract: {enforced: true}
+    columns:
+      - name: contract_id
+        data_type: varchar
+        description: Contract identifier.
+        data_tests: [unique, not_null]
+      - name: merchant_id
+        data_type: varchar
+        description: Selling merchant.
+        data_tests: [not_null]
+      - name: order_line_id
+        data_type: varchar
+        description: Protected order line.
+      - name: product_category
+        data_type: varchar
+        description: Category of the protected product.
+      - name: plan_term_months
+        data_type: integer
+        description: Coverage term.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [12, 24, 36]
+                quote: false
+      - name: currency
+        data_type: varchar
+        description: Currency the plan was sold in.
+      - name: plan_price
+        data_type: decimal(18,2)
+        description: Plan price in the sale currency.
+        data_tests:
+          - in_range:
+              arguments:
+                min_value: 0.01
+      - name: refund_amount
+        data_type: decimal(18,2)
+        description: Refund on cancellation, sale currency. Zero when not cancelled.
+      - name: fx_rate_at_purchase
+        data_type: double
+        description: USD per unit on the purchase date.
+      - name: price_usd
+        data_type: double
+        description: Plan price in USD at the purchase date rate.
+        data_tests: [not_null]
+      - name: refund_usd
+        data_type: double
+        description: Refund in USD at the purchase date rate, so a plan nets to zero on a full refund.
+      - name: net_usd
+        data_type: double
+        description: Price less refund, USD. This is what gets earned.
+      - name: revenue_share_rate_at_sale
+        data_type: double
+        description: Merchant revenue share in force at the moment of sale (point in time, not current).
+        data_tests: [not_null]
+      - name: purchased_at
+        data_type: timestamp
+        description: Sale timestamp, UTC.
+      - name: purchase_date
+        data_type: date
+        description: Sale date, UTC.
+      - name: coverage_start_date
+        data_type: date
+        description: Coverage start. After the manufacturer warranty for electronics and appliances.
+      - name: coverage_end_date
+        data_type: date
+        description: Coverage end, exclusive.
+      - name: cancelled_at
+        data_type: timestamp
+        description: Cancellation timestamp, null if active.
+      - name: cancel_date
+        data_type: date
+        description: Cancellation date.
+      - name: contract_status
+        data_type: varchar
+        description: active, cancelled_full_refund or cancelled_prorated.
+      - name: earn_end_date
+        data_type: date
+        description: Last day (exclusive) revenue is earned to.
+      - name: earn_days
+        data_type: integer
+        description: Days the net price is spread over.
+      - name: is_test_merchant
+        data_type: boolean
+        description: Sold by a sandbox store.
+      - name: source_loaded_at
+        data_type: timestamp
+        description: Latest load time of any event behind this row. Drives incremental models downstream.
+
+  - name: fct_contract_earnings_monthly
+    description: Earned revenue per contract per month. Incremental, delete+insert by contract.
+    config:
+      contract: {enforced: true}
+    data_tests:
+      - dbt_utils_free_unique_combination:
+          arguments:
+            columns: ["contract_id", "month_start"]
+    columns:
+      - name: contract_id
+        data_type: varchar
+        description: Contract identifier.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_contracts')
+                field: contract_id
+      - name: merchant_id
+        data_type: varchar
+        description: Selling merchant.
+      - name: is_test_merchant
+        data_type: boolean
+        description: Sold by a sandbox store.
+      - name: month_start
+        data_type: date
+        description: Month earned in.
+      - name: earned_days
+        data_type: integer
+        description: Covered days falling in the month.
+      - name: earned_usd
+        data_type: double
+        description: Net price times earned_days over earn_days.
+      - name: source_loaded_at
+        data_type: timestamp
+        description: Carried from fct_contracts for the incremental watermark.
+
+  - name: fct_claims
+    description: One row per claim, current state, rebuilt from the full status history. Incremental with a lookback for late rows.
+    config:
+      contract: {enforced: true}
+    columns:
+      - name: claim_id
+        data_type: varchar
+        description: Claim identifier.
+        data_tests: [unique, not_null]
+      - name: contract_id
+        data_type: varchar
+        description: Contract the claim was filed against.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_contracts')
+                field: contract_id
+      - name: merchant_id
+        data_type: varchar
+        description: Selling merchant of the contract.
+      - name: product_category
+        data_type: varchar
+        description: Category of the protected product.
+      - name: current_status
+        data_type: varchar
+        description: Latest status.
+      - name: decision
+        data_type: varchar
+        description: approved or denied, null while open.
+      - name: resolution
+        data_type: varchar
+        description: repair, replace or refund.
+      - name: filed_at
+        data_type: timestamp
+        description: When the customer filed.
+      - name: decided_at
+        data_type: timestamp
+        description: When the claim was approved or denied.
+      - name: paid_at
+        data_type: timestamp
+        description: When the claim was paid.
+      - name: paid_date
+        data_type: date
+        description: Paid date, UTC.
+      - name: currency
+        data_type: varchar
+        description: Payout currency.
+      - name: paid_amount
+        data_type: decimal(18,2)
+        description: Payout in currency.
+      - name: paid_usd
+        data_type: double
+        description: Payout in USD at the paid date rate.
+      - name: is_test_merchant
+        data_type: boolean
+        description: Contract sold by a sandbox store.
+      - name: source_loaded_at
+        data_type: timestamp
+        description: Latest status row load time, for the incremental watermark.
+
+  - name: mrt_merchant_monthly
+    description: Merchant by month KPIs for Finance and Merchant Success. Test merchants excluded.
+    config:
+      contract: {enforced: true}
+    data_tests:
+      - dbt_utils_free_unique_combination:
+          arguments:
+            columns: ["merchant_id", "month_start"]
+    columns:
+      - name: merchant_id
+        data_type: varchar
+        description: Merchant.
+        data_tests: [not_null]
+      - name: month_start
+        data_type: date
+        description: Reporting month.
+        data_tests: [not_null]
+      - name: merchant_name
+        data_type: varchar
+        description: Current trading name.
+      - name: vertical
+        data_type: varchar
+        description: Product vertical.
+      - name: platform
+        data_type: varchar
+        description: Integration platform.
+      - name: eligible_lines
+        data_type: bigint
+        description: Order lines eligible for protection.
+      - name: contracts_sold
+        data_type: bigint
+        description: Plans sold.
+      - name: attach_rate
+        data_type: double
+        description: contracts_sold over eligible_lines.
+        data_tests:
+          - in_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: gwp_usd
+        data_type: double
+        description: Gross written premium, plan sales in USD.
+      - name: refunds_usd
+        data_type: double
+        description: Refunds on cancellations, booked in the cancel month.
+      - name: net_written_usd
+        data_type: double
+        description: gwp_usd less refunds_usd.
+      - name: earned_usd
+        data_type: double
+        description: Revenue earned over coverage days in the month.
+      - name: claims_paid
+        data_type: bigint
+        description: Claims paid in the month.
+      - name: claims_paid_usd
+        data_type: double
+        description: Claim payouts in USD.
+      - name: loss_ratio
+        data_type: double
+        description: claims_paid_usd over earned_usd.
+      - name: merchant_payable_usd
+        data_type: double
+        description: Revenue share owed to the merchant, at the rate in force at each sale, net of clawbacks on refunds.
+
+  - name: rec_contract_payments
+    description: Ledger against payments platform, one row per contract and transaction type.
+    columns:
+      - name: contract_id
+        description: Contract.
+      - name: merchant_id
+        description: Merchant.
+      - name: txn_type
+        description: charge or refund.
+      - name: ledger_currency
+        description: Currency on the contract.
+      - name: payment_currency
+        description: Currency on the payment.
+      - name: ledger_amount
+        description: Amount per the contracts ledger, signed.
+      - name: payment_amount
+        description: Amount per the payments platform, signed.
+      - name: occurred_at
+        description: When the movement happened.
+      - name: match_status
+        description: matched, in_flight, missing_in_ledger, missing_in_payments, currency_mismatch or amount_mismatch.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["matched", "in_flight"]

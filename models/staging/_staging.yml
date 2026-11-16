@@ -1,0 +1,78 @@
+version: 2
+
+models:
+  - name: stg_contract_events
+    description: Contract webhook events, deduplicated to the first delivery of each event_id.
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: event_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["contract.created", "contract.cancelled"]
+      - name: plan_price
+        data_tests:
+          - not_null
+          - in_range:
+              arguments:
+                min_value: 0.01
+
+  - name: stg_merchant_changes
+    description: Merchant CDC log, typed.
+    columns:
+      - name: revenue_share_rate
+        description: Share of the plan price paid to the merchant. A fraction, never a percent.
+        data_tests:
+          - not_null
+          - in_range:
+              arguments:
+                min_value: 0
+                max_value: 0.6
+
+  - name: stg_payment_transactions
+    description: Payments platform transactions converted from minor units.
+    columns:
+      - name: txn_id
+        data_tests: [unique, not_null]
+      - name: txn_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["charge", "refund"]
+
+  - name: stg_claim_status_history
+    description: Claim status changes, typed.
+    columns:
+      - name: claim_status_id
+        data_tests: [unique, not_null]
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["filed", "in_review", "approved", "denied", "paid"]
+
+  - name: stg_fx_rates
+    description: Daily FX rates.
+    data_tests:
+      - dbt_utils_free_unique_combination:
+          arguments:
+            columns: ["currency", "rate_date"]
+
+  - name: stg_orders
+    description: Orders, typed.
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+
+  - name: stg_order_lines
+    description: Order lines, typed.
+    columns:
+      - name: order_line_id
+        data_tests: [unique, not_null]
+      - name: order_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
